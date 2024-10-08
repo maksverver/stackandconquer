@@ -352,9 +352,9 @@ function findBestMoves(state, moves) {
     var moves = state.generateMoves();
     for (var i = 0; i < moves.length; ++i) {
       var move = moves[i];
-      var removed = state.doMove(move);
+      var undoState = state.doMove(move);
       var value = -search(depthLeft - 1, -beta, -alpha);
-      state.undoMove(move, removed);
+      state.undoMove(move, undoState);
       if (value > bestValue) {
         bestValue = value;
         if (value > alpha) alpha = value;
@@ -368,9 +368,9 @@ function findBestMoves(state, moves) {
   var bestValue = -Infinity;
   for (var i = 0; i < moves.length; ++i) {
     var move = moves[i];
-    var removed = state.doMove(move);
+    var undoState = state.doMove(move);
     var value = -search(SEARCH_DEPTH - 1, -Infinity, -bestValue + 1);
-    state.undoMove(move, removed);
+    state.undoMove(move, undoState);
     if (value > bestValue) {
       bestValue = value;
       bestMoves.length = 0;
@@ -571,8 +571,8 @@ function runStandalone() {
         log('Redo stack is empty!');
       } else {
         var move = redoStack.pop();
-        var removed = state.doMove(move);
-        undoStack.push([move, removed]);
+        var undoState = state.doMove(move);
+        undoStack.push([move, undoState]);
         state.debugPrint();
       }
     } else if (line == 'eval') {
@@ -587,8 +587,8 @@ function runStandalone() {
       } else if (indexOfMove(state.generateMoves(), move) < 0) {
         log('Invalid move!')
       } else {
-        var removed = state.doMove(move);
-        undoStack.push([move, removed]);
+        var undoState = state.doMove(move);
+        undoStack.push([move, undoState]);
         redoStack.length = 0;
         state.debugPrint();
       }
