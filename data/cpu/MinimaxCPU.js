@@ -215,6 +215,7 @@ function State(inputJson) {
               score += 1000;
             } else {
               // Winning move for opponent (though I might still be able to prevent it).
+              // Possible improvement: check if I have moves to prevent it.
               score -= 100;
             }
           }
@@ -332,10 +333,18 @@ function State(inputJson) {
 }
 
 // Finds the best move among the given `moves`, using a Minimax search algorithm
-// (actually Negamax, to be technical).
+// (actually Negamax, to be technical) with alpha-beta pruning.
+//
+// Opportunities for optimization:
+//
+//  - move ordering by shallow search
+//  - instead of calling generateMoves(), generate moves incrementally, to
+//    avoid wasting work when a beta-cutoff happens.
+//  - add a transposition table?
+//
 function findBestMoves(state, moves) {
 
-  function search(depthLeft) {
+  function search(depthLeft, alpha, beta) {
     if (depthLeft === 0) {
       return state.evaluate();
     }
@@ -344,9 +353,13 @@ function findBestMoves(state, moves) {
     for (var i = 0; i < moves.length; ++i) {
       var move = moves[i];
       var removed = state.doMove(move);
-      var value = -search(depthLeft - 1);
+      var value = -search(depthLeft - 1, -beta, -alpha);
       state.undoMove(move, removed);
-      if (value > bestValue) bestValue = value;
+      if (value > bestValue) {
+        bestValue = value;
+        if (value > alpha) alpha = value;
+        if (value >= beta) break;
+      }
     }
     return bestValue;
   }
@@ -356,7 +369,7 @@ function findBestMoves(state, moves) {
   for (var i = 0; i < moves.length; ++i) {
     var move = moves[i];
     var removed = state.doMove(move);
-    var value = -search(SEARCH_DEPTH - 1);
+    var value = -search(SEARCH_DEPTH - 1, -Infinity, -bestValue + 1);
     state.undoMove(move, removed);
     if (value > bestValue) {
       bestValue = value;
@@ -616,8 +629,8 @@ if (typeof game === 'undefined') {
 // Future improvements:
 //
 //  - add tests
+//  - add benchmarks (before attempting further optimizations)
 //  - optimize search and evaluation functions
-//  - alpha-beta pruning
 //  - support arbitrary board configurations
 //  - support more than 2 players
 //
