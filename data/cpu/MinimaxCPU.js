@@ -229,9 +229,9 @@ function State(inputJson) {
         // Reward pieces on the board.
         for (var i = 0; i < dstHeight; ++i) {
           if (dstField[i] === nextPlayer) {
-            score += 1;
+            score += 1 + i;
           } else {
-            score -= 1;
+            score -= 1 + i;
           }
         }
       }
