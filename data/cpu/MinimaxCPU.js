@@ -24,14 +24,6 @@
  *
  * CPU opponent using a Minimax algorithm.
  *
- * Following function can be used to access data from game:
- *   game.getID();
- *   game.getNumOfPlayers();
- *   game.getHeightToWin();
- *   game.getBoardDimensionX();
- *   game.getBoardDimensionY();
- *   game.getOutside();
- *   game.getPadding();
  *
  * Remark: Qt <= 5.11 supports only ECMAScript 5, so
  * ES5 should be chosen for compatibility reasons!
@@ -56,7 +48,7 @@ var PASS = Object.freeze([]);
 
 function createConfig(
     rows, cols, inputFields, outside, padding,
-    winningHeight, piecesPerPlayer, playerCount) {
+    winningHeight, winningScore, piecesPerPlayer, playerCount) {
   if (inputFields.length !== rows * cols) {
     throw new Error('Invalid length of input fields');
   }
@@ -115,6 +107,7 @@ function createConfig(
     fieldCount: fieldCount,
     moves: Object.freeze(moves),
     winningHeight: winningHeight,
+    winningScore: winningScore,
     piecesPerPlayer: piecesPerPlayer,
     playerCount: playerCount,
     // These are only used for parseMove() and debug-printing:
@@ -147,11 +140,8 @@ function State(cfg, inputJson) {
   // Next player to move. Either 0 or 1.
   var nextPlayer = inputJson ? inputJson.nextPlayer : 0;
 
-  // Scores for each player (i.e., number of towers won).
-  //
-  // Ideally I would represent this as an array of number of towers left to win,
-  // but the game does not pass this information to the CPU players (issue #10).
-  var scores = inputJson ? inputJson.scores : arrayOfValues(cfg.playerCount, 0);
+  // Number of towers each player needs to win.
+  var scoresLeft = inputJson ? inputJson.scoresLeft : arrayOfValues(cfg.playerCount, cfg.winningScore);
 
   // Last move played (to prevent reverting)
   var lastMove = inputJson ? inputJson.lastMove : null;
@@ -171,6 +161,11 @@ function State(cfg, inputJson) {
         for (var j = 0; j < height; ++j) --piecesLeft[fields[i][j]];
       }
     }
+  }
+
+  // Returns the player index of the winner, or -1 if there is no winner.
+  function getWinner() {
+    return scoresLeft.indexOf(0);
   }
 
   // Executes a move. Important: `move` must be valid!
@@ -194,7 +189,7 @@ function State(cfg, inputJson) {
         if (dstField.length >= cfg.winningHeight) {
           removed = dstField.splice(0);
           var winner = removed[removed.length - 1];
-          scores[winner] += 1;
+          scoresLeft[winner] -= 1;
           occupied ^= 1 << dst;
           for (var i = 0; i < removed.length; ++i) ++piecesLeft[removed[i]];
         }
@@ -225,7 +220,7 @@ function State(cfg, inputJson) {
         if (removed != null) {
           for (var i = 0; i < removed.length; ++i) --piecesLeft[removed[i]];
           var winner = removed[removed.length - 1];
-          scores[winner] -= 1;
+          scoresLeft[winner] += 1;
           dstField.push.apply(dstField, removed);
           occupied ^= 1 << dst;
         }
@@ -242,7 +237,10 @@ function State(cfg, inputJson) {
   // The current evaluation function is not highly optimized. It can probably
   // be optimized significantly.
   function evaluate() {
-    var score = 10000 * (scores[nextPlayer] - scores[1 - nextPlayer]);
+    var winner = getWinner();
+    if (winner !== -1) return winner === nextPlayer ? 1000000000 : -1000000000;
+
+    var score = 10000 * (scoresLeft[1 - nextPlayer] - scoresLeft[nextPlayer]);
     for (var dst = 0; dst < fields.length; ++dst) {
       var dstField = fields[dst];
       var dstHeight = dstField.length;
@@ -291,6 +289,8 @@ function State(cfg, inputJson) {
   //  - https://spielstein.com/games/mixtour/rules (2 players)
   //  - https://spielstein.com/games/mixtour/rules/a-trois (3 players)
   function generateMoves() {
+    if (getWinner() !== -1) return [];  // Game is over
+    var moveTemplates = cfg.moves;
     var moves = [];
     var lastCnt = 0, lastSrc = -1, lastDst = -1;
     if (lastMove != null && lastMove.length != 0) {
@@ -305,7 +305,7 @@ function State(cfg, inputJson) {
           moves.push([1, dst, dst]);  // place new piece
         }
       } else {
-        var options = cfg.moves[dst][dstHeight];
+        var options = moveTemplates[dst][dstHeight];
         for (var i = 0; i < options.length; ++i) {
           var src = options[i][0];
           var srcHeight = fields[src].length;
@@ -328,7 +328,7 @@ function State(cfg, inputJson) {
   // This currently only works for rectangular boards without holes, like the
   // default 5x5 board.
   function debugPrint() {
-    log('Scores: ' + scores);
+    log('Scores left: ' + scoresLeft);
     log('Pieces left: ' + piecesLeft);
     log('Player ' + (nextPlayer + 1) + ' to move.');
     for (var r = 0; r < cfg.rows; ++r) {
@@ -359,7 +359,7 @@ function State(cfg, inputJson) {
     }
     log(line);
     log('last move: ' + (lastMove ? formatMove(cfg, lastMove) : 'none'));
-    var moves = generateMoves(cfg.moves);
+    var moves = generateMoves();
     log(moves.length + ' possible moves: ' + formatMoves(cfg, moves));
   }
 
@@ -367,7 +367,7 @@ function State(cfg, inputJson) {
   // clone, so it's invalidated when the state changes! To prevent this, the
   // caller should serialize the object to a string.
   function toJson() {
-    return {fields: fields, nextPlayer: nextPlayer, scores: scores, lastMove: lastMove};
+    return {fields: fields, nextPlayer: nextPlayer, scoresLeft: scoresLeft, lastMove: lastMove};
   }
 
   return {
@@ -396,8 +396,15 @@ function findBestMoves(state, moves) {
     if (depthLeft === 0) {
       return state.evaluate();
     }
-    var bestValue = -Infinity;
     var moves = state.generateMoves();
+    if (moves.length === 0) {
+      // Game is over. Adjust value by `depthLeft` to reward quicker wins.
+      var value = state.evaluate();
+      if (value > 0) value += depthLeft;
+      if (value < 0) value -= depthLeft;
+      return value;
+    };
+    var bestValue = -Infinity;
     for (var i = 0; i < moves.length; ++i) {
       var move = moves[i];
       var undoState = state.doMove(move);
@@ -428,6 +435,14 @@ function findBestMoves(state, moves) {
     }
   }
   return [bestMoves, bestValue];
+}
+
+function calculateScoresLeft(cfg, scores) {
+  var scoresLeft = [];
+  for (var i = 0; i < scores.length; ++i) {
+    scoresLeft.push(cfg.winningScore - scores[i]);
+  }
+  return scoresLeft;
 }
 
 function arrayEquals(a, b) {
@@ -467,6 +482,7 @@ function callCPU(jsonBoard, jsonMoves, nDirection) {
     game.getOutside(),
     game.getPadding(),
     game.getHeightToWin(),
+    game.getTowersToWin(),
     PIECES_PER_PLAYER,
     game.getNumOfPlayers(),
   );
@@ -507,9 +523,12 @@ function callCPU(jsonBoard, jsonMoves, nDirection) {
   }
   if (fields.length !== cfg.fieldCount) throw new Error('Invalid number of fields');
 
-  var scores = arrayOfValues(cfg.playerCount, 0);  // issue #10
-  var lastMove = null;  // issue #9
-  var state = State(cfg, {fields: fields, nextPlayer: myId - 1, scores: scores, lastMove: lastMove});
+  var state = State(cfg, {
+    fields: fields,
+    nextPlayer: myId - 1,
+    scoresLeft: calculateScoresLeft(cfg, game.getScores()),
+    lastMove: null,  // issue #9
+  });
   var result = findBestMoves(state, moves);
   var bestMoves = result[0];
   var bestMove = bestMoves[Math.floor(Math.random() * bestMoves.length)];
@@ -600,7 +619,7 @@ function formatMoves(cfg, moves) {
 //          3a1b2 (move 3 pieces from a1 to b2)
 //
 function runStandalone() {
-  var cfg = createConfig(5, 5, ".........................", '#', '-', 5, 20, 2);
+  var cfg = createConfig(5, 5, ".........................", '#', '-', 5, 3, 20, 2);
 
   var undoStack = [];
   var redoStack = [];
@@ -682,11 +701,3 @@ if (typeof game === 'undefined') {
   log('Starting standalone.');
   runStandalone();
 }
-
-// Future improvements:
-//
-//  - add tests
-//  - add benchmarks (before attempting further optimizations)
-//  - optimize search and evaluation functions
-//  - support more than 2 players
-//
